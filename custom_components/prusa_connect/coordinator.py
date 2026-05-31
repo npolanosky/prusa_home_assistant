@@ -248,15 +248,32 @@ class PrusaConnectCoordinator(DataUpdateCoordinator[PrusaConnectData]):
         uuid = self._printer_uuid
         assert client is not None and uuid is not None
 
-        printer = await client.get_printer(uuid)
-        self.printer_data.printer_info = printer
-        self.printer_data.printer_status = printer
-        self.printer_data.status = printer
+        # Try to get printer info and status
+        try:
+            printer = await client.get_printer(uuid)
+            self.printer_data.printer_info = printer
+            self.printer_data.printer_status = printer
+            self.printer_data.status = printer
+        except PrusaConnectError as err:
+            _LOGGER.debug("Failed to get printer %s: %s", uuid, err)
+            # Try status endpoint separately
+            try:
+                status = await client.get_printer_status(uuid)
+                self.printer_data.status = status
+                self.printer_data.printer_status = status
+            except PrusaConnectError as err2:
+                _LOGGER.warning("Failed to get printer status %s: %s", uuid, err2)
+                raise
 
-        jobs = await client.get_jobs(uuid)
-        if jobs:
-            self.printer_data.job = jobs[0]
-            self.printer_data.job_file = jobs[0].get("file", {})
-        else:
+        try:
+            jobs = await client.get_jobs(uuid)
+            if jobs:
+                self.printer_data.job = jobs[0]
+                self.printer_data.job_file = jobs[0].get("file", {})
+            else:
+                self.printer_data.job = None
+                self.printer_data.job_file = {}
+        except PrusaConnectError as err:
+            _LOGGER.debug("Failed to get jobs for %s: %s", uuid, err)
             self.printer_data.job = None
             self.printer_data.job_file = {}

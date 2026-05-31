@@ -13,7 +13,7 @@ CONF_CONNECTION_TYPE = "connection_type"
 CONNECTION_TYPE_LOCAL = "local"
 CONNECTION_TYPE_CLOUD = "cloud"
 
-PRUSA_CONNECT_CLOUD_API = "https://connect-mobile-api.prusa3d.com/api/v1"
+PRUSA_CONNECT_CLOUD_API = "https://connect.prusa3d.com"
 
 PLATFORMS = ["sensor", "camera"]
 
