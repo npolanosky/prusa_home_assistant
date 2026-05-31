@@ -28,9 +28,9 @@
       },
       "cloud": {
         "title": "Prusa Connect (Cloud)",
-        "description": "Connect via Prusa Connect at [{prusa_connect_url}]({prusa_connect_url}).\n\nUse the same API key that works in OrcaSlicer or PrusaSlicer for Prusa Connect uploads. The integration will automatically detect the correct authentication method.\n\nFor debug logs, add this to `configuration.yaml`:\n```\nlogger:\n  logs:\n    custom_components.prusa_connect: debug\n```",
+        "description": "Connect via the Prusa Connect cloud at [{prusa_connect_url}]({prusa_connect_url}).\n\nThis requires an **OAuth2 access token** from your Prusa Account (the same account used by PrusaSlicer's cloud features). This is NOT the same as the local PrusaLink API key shown in your printer's web interface.\n\n**Note:** If you use an API key from OrcaSlicer or your printer's settings page, choose **Local (PrusaLink)** instead and enter your printer's IP address.\n\nFor debug logs, add to `configuration.yaml`:\n```\nlogger:\n  logs:\n    custom_components.prusa_connect: debug\n```",
         "data": {
-          "api_key": "API Key / Token"
+          "api_key": "Access Token"
         }
       },
       "select_printer": {

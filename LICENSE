@@ -5,6 +5,12 @@ Copyright (c) 2024-2026 Nick Polanosky
 Based on work by sq3tle (https://github.com/sq3tle/prusa_mini_home_assistant),
 originally licensed under MIT.
 
+API endpoint patterns and authentication methods were documented by
+referencing PrusaSlicer (https://github.com/prusa3d/PrusaSlicer, AGPL-3.0)
+and OrcaSlicer (https://github.com/OrcaSlicer/OrcaSlicer, AGPL-3.0).
+No source code was copied from either project; only publicly available
+API interface details (URLs, header names, endpoint paths) were used.
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

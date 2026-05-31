@@ -91,6 +91,8 @@ name: Prusa Mini
 
 This project is based on [prusa_mini_home_assistant](https://github.com/sq3tle/prusa_mini_home_assistant) by [@sq3tle](https://github.com/sq3tle), licensed under MIT. The custom Lovelace card design was inspired by the card included in [ha-bambulab](https://github.com/greghesp/ha-bambulab) by [@greghesp](https://github.com/greghesp).
 
+API endpoint patterns and authentication methods were documented by referencing [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) (AGPL-3.0) and [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) (AGPL-3.0). No source code was copied from either project; only publicly available API interface details (URLs, header names, endpoint paths) were used.
+
 This integration was developed with the assistance of LLM tools (Anthropic Claude). All code was reviewed and tested by the maintainer.
 
 ## License

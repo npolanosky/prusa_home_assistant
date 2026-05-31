@@ -49,11 +49,21 @@ AUTH_STYLES = [
     },
 ]
 
-# Endpoint paths we try for listing printers, in order
+# Endpoint paths we try for listing printers, in order.
+# From PrusaSlicer ServiceConfig:
+#   /app/printers/           — connect_printers_url (Bearer, cloud)
+#   /slicer/v1/printers      — connect_printer_list_url (Bearer, cloud)
+# From OrcaSlicer/PrusaLink legacy:
+#   /api/version             — used by OctoPrint/PrusaLink classes (X-Api-Key)
 PRINTER_LIST_PATHS = [
     "/app/printers/",
     "/slicer/v1/printers",
-    "/api/v1/printers",
+    "/slicer/status",
+]
+
+# If printer list paths all fail, we try a simple connectivity test
+CONNECTIVITY_TEST_PATHS = [
+    "/api/version",
 ]
 
 
@@ -257,6 +267,38 @@ class PrusaConnectClient:
                 )
                 _LOGGER.info("Prusa Connect: %s", result)
                 return True, result
+
+        # Printer list endpoints all failed. Try connectivity test endpoints
+        # (like /api/version which OrcaSlicer uses) to distinguish auth errors
+        # from network errors.
+        for style in AUTH_STYLES:
+            self._auth_header_key = style["header_key"]
+            self._auth_header_value = style["header_fmt"].format(token=self._token)
+
+            for path in CONNECTIVITY_TEST_PATHS:
+                label = f'{style["name"]} → {path} (connectivity test)'
+                _LOGGER.info("Prusa Connect: trying %s", label)
+
+                try:
+                    status, data = await self._request("GET", path, label=label)
+                except PrusaConnectError as err:
+                    attempts.append(f"{label}: connection error ({err})")
+                    continue
+
+                if status == 200 and data:
+                    msg = (
+                        f'{style["name"]} auth works for {path} '
+                        f"(got: {list(data.keys()) if isinstance(data, dict) else type(data).__name__}), "
+                        f"but no printer list endpoint responded. "
+                        f"Your API key may be a local PrusaLink key — "
+                        f"try using the Local connection mode instead with your printer's IP address."
+                    )
+                    _LOGGER.warning("Prusa Connect: %s", msg)
+                    attempts.append(msg)
+                elif status in (401, 403):
+                    attempts.append(f"{label}: HTTP {status} (auth rejected)")
+                else:
+                    attempts.append(f"{label}: HTTP {status}")
 
         # All failed
         summary = "All authentication attempts failed:\n" + "\n".join(
