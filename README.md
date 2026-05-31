@@ -86,3 +86,13 @@ name: Prusa Mini
 - Home Assistant 2024.1.0+
 - Prusa Mini, Prusa MK3S+, Prusa MK4, Prusa XL (any printer with PrusaLink or Prusa Connect)
 - HACS compatible
+
+## Acknowledgments & Disclosure
+
+This project is based on [prusa_mini_home_assistant](https://github.com/sq3tle/prusa_mini_home_assistant) by [@sq3tle](https://github.com/sq3tle), licensed under MIT. The custom Lovelace card design was inspired by the card included in [ha-bambulab](https://github.com/greghesp/ha-bambulab) by [@greghesp](https://github.com/greghesp).
+
+This integration was developed with the assistance of LLM tools (Anthropic Claude). All code was reviewed and tested by the maintainer.
+
+## License
+
+MIT — see [LICENSE](LICENSE) for details.
