@@ -37,7 +37,7 @@ PRUSA_CONNECT_CARDS = [
     {
         "name": "Prusa Connect Cards",
         "filename": "prusa-connect-card.js",
-        "version": "1.0.0",
+        "version": "2.0.0",
     }
 ]
 
