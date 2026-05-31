@@ -100,7 +100,8 @@ class PrusaConnectData:
 
     @property
     def fan_hotend(self) -> int | None:
-        return self._int("fan_hotend")
+        # Firmware sends "fan_extruder" while printing; "fan_hotend" otherwise.
+        return self._int("fan_hotend", "fan_extruder")
 
     @property
     def fan_print(self) -> int | None:
@@ -334,17 +335,30 @@ class PrusaConnectCoordinator(DataUpdateCoordinator[PrusaConnectData]):
             self._printer_uuid = uuid
 
         printer = await client.get_printer(uuid)
+        # Log the raw payload once per refresh at DEBUG so the exact cloud field
+        # names can be confirmed without guessing.
+        _LOGGER.debug("Prusa Connect raw printer payload: %s", printer)
         self.printer_data.printer_info = printer
 
         # The cloud payload nests live values under "telemetry"; flatten them so
-        # the normalizing properties on PrusaConnectData can find them.
-        telemetry = printer.get("telemetry") or {}
-        merged = {**printer, **telemetry}
+        # the normalizing properties on PrusaConnectData can find them. Some
+        # responses also nest under "printer" or "status".
+        telemetry = (
+            printer.get("telemetry")
+            or printer.get("printer")
+            or {}
+        )
+        merged = {**printer, **telemetry} if isinstance(telemetry, dict) else dict(printer)
         self.printer_data.printer_status = merged
         self.printer_data.status = merged
 
         # Job info may be inline on the printer payload or via the jobs endpoint.
-        job = printer.get("job_info") or printer.get("job")
+        job = (
+            printer.get("job_info")
+            or printer.get("job")
+            or merged.get("job_info")
+            or merged.get("job")
+        )
         if not job:
             try:
                 jobs = await client.get_jobs(uuid)

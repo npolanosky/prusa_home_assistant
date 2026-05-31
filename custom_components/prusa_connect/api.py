@@ -140,6 +140,32 @@ class PrusaConnectClient:
         }
         return await self._token_request(body, "authorization_code")
 
+    async def async_login_password(
+        self, username: str, password: str
+    ) -> tuple[bool, str]:
+        """Log in directly with a Prusa account email + password (ROPC).
+
+        Returns (ok, detail). This is the convenient path: no browser, no
+        copy-paste. It will not work for accounts with two-factor auth (the
+        password grant can't present a 2FA challenge) — those should use the
+        browser flow instead.
+        """
+        body = {
+            "grant_type": "password",
+            "client_id": PRUSA_OAUTH_CLIENT_ID,
+            "username": username,
+            "password": password,
+            "scope": PRUSA_OAUTH_SCOPE,
+        }
+        ok, detail = await self._token_request(body, "password")
+        if not ok and "invalid_grant" in detail.lower():
+            # Friendlier message for the most common failure.
+            detail = (
+                "Incorrect email/password, or this account uses two-factor "
+                "authentication (which requires the browser login instead)."
+            )
+        return ok, detail
+
     async def async_refresh_token(self) -> tuple[bool, str]:
         """Refresh the access token. Returns (ok, detail)."""
         if not self._refresh_token:

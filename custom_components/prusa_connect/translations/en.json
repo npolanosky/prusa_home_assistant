@@ -1,4 +1,26 @@
 {
+  "entity": {
+    "sensor": {
+      "status": { "name": "Status" },
+      "nozzle_temperature": { "name": "Nozzle temperature" },
+      "nozzle_target_temperature": { "name": "Nozzle target temperature" },
+      "bed_temperature": { "name": "Bed temperature" },
+      "bed_target_temperature": { "name": "Bed target temperature" },
+      "progress": { "name": "Progress" },
+      "project_name": { "name": "Project" },
+      "material": { "name": "Material" },
+      "z_height": { "name": "Z height" },
+      "print_speed": { "name": "Print speed" },
+      "flow": { "name": "Flow" },
+      "fan_print": { "name": "Print fan" },
+      "fan_hotend": { "name": "Hotend fan" },
+      "time_remaining": { "name": "Time remaining" },
+      "time_printing": { "name": "Time printing" }
+    },
+    "camera": {
+      "printer_camera": { "name": "Camera" }
+    }
+  },
   "config": {
     "abort": {
       "already_configured": "This printer is already configured"
