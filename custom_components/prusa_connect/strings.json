@@ -4,9 +4,9 @@
       "already_configured": "This printer is already configured"
     },
     "error": {
-      "invalid_auth": "Authentication failed — check your API key. Detailed error info is shown below.",
-      "cannot_connect": "Unable to connect. Detailed error info is shown below.",
-      "no_printers": "Connected successfully but no printers found. See details below.",
+      "invalid_auth": "Authentication failed — see error details below. Submit again to save anyway.",
+      "cannot_connect": "Unable to connect — see error details below. Submit again to save anyway.",
+      "no_printers": "Connected but no printers found. See details below.",
       "printer_not_found": "Selected printer could not be found."
     },
     "step": {
@@ -23,14 +23,15 @@
         "data": {
           "host": "Printer IP address or hostname (e.g. 192.168.1.100)",
           "api_key": "API Key",
-          "printer_name": "Printer name (optional, auto-detected if blank)"
+          "printer_name": "Printer name (optional)"
         }
       },
       "cloud": {
         "title": "Prusa Connect (Cloud)",
         "description": "Connect via the Prusa Connect cloud at [{prusa_connect_url}]({prusa_connect_url}).\n\nFind your API key at **connect.prusa3d.com** → select your printer → **Settings** tab → scroll to **API keys**. This is the same key used in PrusaSlicer and OrcaSlicer.",
         "data": {
-          "api_key": "Prusa Connect API Key"
+          "api_key": "Prusa Connect API Key",
+          "printer_name": "Printer name"
         }
       },
       "select_printer": {
@@ -45,8 +46,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Prusa Connect Options",
+        "title": "Prusa Connect Configuration",
+        "description": "Update your connection settings. Changes will reload the integration automatically.",
         "data": {
+          "host": "Printer IP address or hostname",
+          "api_key": "API Key",
+          "printer_name": "Printer name",
+          "printer_uuid": "Printer UUID (cloud only)",
           "scan_interval": "Update interval (seconds)"
         }
       }
