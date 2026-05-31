@@ -29,7 +29,7 @@ PRUSA_OAUTH_SCOPE = "basic_info"
 PRUSA_OAUTH_AUTHORIZE_PATH = "/o/authorize/"
 PRUSA_OAUTH_TOKEN_PATH = "/o/token/"
 
-PLATFORMS = ["sensor", "camera"]
+PLATFORMS = ["sensor", "camera", "button"]
 
 PRUSA_CONNECT_CARDS = [
     {

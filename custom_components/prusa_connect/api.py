@@ -364,6 +364,50 @@ class PrusaLinkClient:
         except aiohttp.ClientError:
             return None
 
+    async def get_image(self, path: str) -> bytes | None:
+        """Fetch raw image bytes from a printer-relative path (e.g. a thumbnail)."""
+        url = f"{self._host}{path}"
+        try:
+            async with self._session.get(
+                url, headers=self._headers, timeout=aiohttp.ClientTimeout(total=15)
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.read()
+                _LOGGER.debug("PrusaLink thumbnail %s -> HTTP %s", url, resp.status)
+                return None
+        except aiohttp.ClientError as err:
+            _LOGGER.debug("PrusaLink thumbnail fetch failed for %s: %s", url, err)
+            return None
+
+    async def _command(self, method: str, path: str) -> None:
+        """Send a state-changing command (expects HTTP 2xx/204)."""
+        url = f"{self._host}{path}"
+        _LOGGER.debug("PrusaLink command: %s %s", method, url)
+        try:
+            async with self._session.request(
+                method, url, headers=self._headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status in (401, 403):
+                    raise PrusaConnectAuthError(f"Invalid API key (HTTP {resp.status})")
+                if resp.status >= 400:
+                    body = await resp.text()
+                    raise PrusaConnectError(
+                        f"Command {method} {path} failed (HTTP {resp.status}): "
+                        f"{body[:200]}"
+                    )
+        except aiohttp.ClientError as err:
+            raise PrusaConnectError(f"Connection error: {err}") from err
+
+    async def pause_job(self, job_id: int) -> None:
+        await self._command("PUT", f"/api/v1/job/{job_id}/pause")
+
+    async def resume_job(self, job_id: int) -> None:
+        await self._command("PUT", f"/api/v1/job/{job_id}/resume")
+
+    async def stop_job(self, job_id: int) -> None:
+        await self._command("DELETE", f"/api/v1/job/{job_id}")
+
     async def validate(self) -> tuple[bool, str]:
         """Validate the API key against the printer."""
         try:

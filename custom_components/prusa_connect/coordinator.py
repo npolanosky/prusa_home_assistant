@@ -137,8 +137,30 @@ class PrusaConnectData:
         return None
 
     @property
+    def job_id(self) -> int | None:
+        if self.job:
+            val = self.job.get("id")
+            if val is not None:
+                try:
+                    return int(val)
+                except (ValueError, TypeError):
+                    return None
+        return None
+
+    @property
+    def thumbnail_path(self) -> str | None:
+        refs = self.job_file.get("refs") if self.job_file else None
+        if isinstance(refs, dict):
+            return refs.get("thumbnail") or refs.get("icon")
+        return None
+
+    @property
     def is_printing(self) -> bool:
         return self.state in ("PRINTING", "BUSY")
+
+    @property
+    def is_paused(self) -> bool:
+        return self.state in ("PAUSED", "PAUSING")
 
     @property
     def is_online(self) -> bool:
@@ -217,6 +239,39 @@ class PrusaConnectCoordinator(DataUpdateCoordinator[PrusaConnectData]):
             update_interval=interval,
             config_entry=entry,
         )
+
+    @property
+    def is_local(self) -> bool:
+        """True if this is a local PrusaLink connection."""
+        return self._local_client is not None
+
+    async def async_get_thumbnail(self) -> bytes | None:
+        """Fetch the current print's thumbnail PNG (local connections only)."""
+        if not self._local_client:
+            return None
+        path = self.printer_data.thumbnail_path
+        if not path:
+            return None
+        return await self._local_client.get_image(path)
+
+    async def async_send_command(self, action: str) -> None:
+        """Send a job control command (pause/resume/stop). Local only."""
+        if not self._local_client:
+            raise PrusaConnectError(
+                "Job control is only available for local connections."
+            )
+        job_id = self.printer_data.job_id
+        if job_id is None:
+            raise PrusaConnectError("No active job to control.")
+        if action == "pause":
+            await self._local_client.pause_job(job_id)
+        elif action == "resume":
+            await self._local_client.resume_job(job_id)
+        elif action == "stop":
+            await self._local_client.stop_job(job_id)
+        else:
+            raise PrusaConnectError(f"Unknown command: {action}")
+        await self.async_request_refresh()
 
     async def _async_persist_tokens(self, access_token: str, refresh_token: str) -> None:
         """Persist refreshed OAuth tokens back to the config entry."""

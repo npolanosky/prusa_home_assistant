@@ -16,7 +16,14 @@ class PrusaConnectEntity(CoordinatorEntity[PrusaConnectCoordinator]):
     def __init__(self, coordinator: PrusaConnectCoordinator) -> None:
         super().__init__(coordinator)
         entry = coordinator.config_entry
-        self._printer_uuid = entry.data[CONF_PRINTER_UUID]
+        # Local (PrusaLink) entries have no printer UUID — fall back to the
+        # entry's unique_id (serial) or entry_id so the device identifier is
+        # stable across both connection modes.
+        self._printer_uuid = (
+            entry.data.get(CONF_PRINTER_UUID)
+            or entry.unique_id
+            or entry.entry_id
+        )
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._printer_uuid)},
             name=entry.data.get(CONF_PRINTER_NAME, "Prusa Printer"),
