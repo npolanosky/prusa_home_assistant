@@ -1,0 +1,252 @@
+"""Config flow for Prusa Connect integration."""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import voluptuous as vol
+
+from homeassistant.config_entries import ConfigFlow, OptionsFlow
+from homeassistant.core import callback
+from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+from .api import PrusaConnectClient, PrusaLinkClient, PrusaConnectAuthError, PrusaConnectError
+from .const import (
+    CONF_API_KEY,
+    CONF_CONNECTION_TYPE,
+    CONF_HOST,
+    CONF_PRINTER_NAME,
+    CONF_PRINTER_TYPE,
+    CONF_PRINTER_UUID,
+    CONNECTION_TYPE_CLOUD,
+    CONNECTION_TYPE_LOCAL,
+    DOMAIN,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+CONFIG_VERSION = 1
+
+
+class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Prusa Connect."""
+
+    VERSION = CONFIG_VERSION
+
+    def __init__(self) -> None:
+        self._connection_type: str = ""
+        self._api_key: str = ""
+        self._host: str = ""
+        self._printers: list[dict[str, Any]] = []
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        return PrusaConnectOptionsFlow(config_entry)
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the first step — choose connection type."""
+        if user_input is not None:
+            self._connection_type = user_input[CONF_CONNECTION_TYPE]
+            if self._connection_type == CONNECTION_TYPE_LOCAL:
+                return await self.async_step_local()
+            return await self.async_step_cloud()
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_CONNECTION_TYPE, default=CONNECTION_TYPE_LOCAL): vol.In(
+                        {
+                            CONNECTION_TYPE_LOCAL: "Local (PrusaLink — connect via printer IP)",
+                            CONNECTION_TYPE_CLOUD: "Cloud (Prusa Connect — via cloud API token)",
+                        }
+                    ),
+                }
+            ),
+        )
+
+    async def async_step_local(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle local PrusaLink connection setup."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            host = user_input[CONF_HOST]
+            api_key = user_input[CONF_API_KEY]
+            session = async_get_clientsession(self.hass)
+            client = PrusaLinkClient(host, api_key, session)
+
+            try:
+                if not await client.validate():
+                    errors["base"] = "cannot_connect"
+                else:
+                    info = await client.get_info()
+                    printer_name = user_input.get(
+                        CONF_PRINTER_NAME,
+                        info.get("name", info.get("hostname", "Prusa Printer")),
+                    )
+                    serial = info.get("serial", host)
+                    await self.async_set_unique_id(serial)
+                    self._abort_if_unique_id_configured()
+
+                    return self.async_create_entry(
+                        title=printer_name,
+                        data={
+                            CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL,
+                            CONF_HOST: host,
+                            CONF_API_KEY: api_key,
+                            CONF_PRINTER_NAME: printer_name,
+                            CONF_PRINTER_TYPE: info.get("type", ""),
+                        },
+                    )
+            except PrusaConnectAuthError:
+                errors["base"] = "invalid_auth"
+            except PrusaConnectError:
+                errors["base"] = "cannot_connect"
+
+        return self.async_show_form(
+            step_id="local",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST): str,
+                    vol.Required(CONF_API_KEY): str,
+                    vol.Optional(CONF_PRINTER_NAME): str,
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "api_key_help": "Find your API key in PrusaLink settings on the printer's web interface",
+            },
+        )
+
+    async def async_step_cloud(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle cloud Prusa Connect setup with Bearer token."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            token = user_input[CONF_API_KEY]
+            session = async_get_clientsession(self.hass)
+            client = PrusaConnectClient(token, session)
+
+            try:
+                printers = await client.get_printers()
+            except PrusaConnectAuthError:
+                errors["base"] = "invalid_auth"
+            except PrusaConnectError:
+                errors["base"] = "cannot_connect"
+            else:
+                if not printers:
+                    errors["base"] = "no_printers"
+                else:
+                    self._api_key = token
+                    self._printers = printers
+                    return await self.async_step_select_printer()
+
+        return self.async_show_form(
+            step_id="cloud",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_API_KEY): str,
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "prusa_connect_url": "https://connect.prusa3d.com",
+            },
+        )
+
+    async def async_step_select_printer(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle printer selection step for cloud connection."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            printer_uuid = user_input[CONF_PRINTER_UUID]
+            printer = next(
+                (p for p in self._printers if self._get_uuid(p) == printer_uuid),
+                None,
+            )
+
+            if printer is None:
+                errors["base"] = "printer_not_found"
+            else:
+                await self.async_set_unique_id(printer_uuid)
+                self._abort_if_unique_id_configured()
+
+                printer_name = printer.get("name", "Prusa Printer")
+                printer_type = printer.get("printerType", printer.get("printer_type", ""))
+
+                return self.async_create_entry(
+                    title=printer_name,
+                    data={
+                        CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD,
+                        CONF_API_KEY: self._api_key,
+                        CONF_PRINTER_UUID: printer_uuid,
+                        CONF_PRINTER_NAME: printer_name,
+                        CONF_PRINTER_TYPE: printer_type,
+                    },
+                )
+
+        printer_options = {
+            self._get_uuid(p): self._get_printer_label(p)
+            for p in self._printers
+        }
+
+        return self.async_show_form(
+            step_id="select_printer",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_PRINTER_UUID): vol.In(printer_options),
+                }
+            ),
+            errors=errors,
+        )
+
+    @staticmethod
+    def _get_uuid(printer: dict) -> str:
+        return printer.get("uuid", printer.get("id", printer.get("sn", "")))
+
+    @staticmethod
+    def _get_printer_label(printer: dict) -> str:
+        name = printer.get("name", "Unknown")
+        ptype = printer.get("printerType", printer.get("printer_type", ""))
+        state = printer.get("state", "")
+        parts = [name]
+        if ptype:
+            parts.append(f"({ptype})")
+        if state:
+            parts.append(f"[{state}]")
+        return " ".join(parts)
+
+
+class PrusaConnectOptionsFlow(OptionsFlow):
+    """Handle options flow for Prusa Connect."""
+
+    def __init__(self, config_entry) -> None:
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        "scan_interval",
+                        default=self._config_entry.options.get("scan_interval", 30),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=10, max=300)),
+                }
+            ),
+        )

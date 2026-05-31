@@ -1,0 +1,12 @@
+{
+  "domain": "prusa_connect",
+  "name": "Prusa Connect",
+  "codeowners": ["@npolanosky"],
+  "config_flow": true,
+  "dependencies": ["frontend", "http"],
+  "documentation": "https://github.com/npolanosky/prusa_home_assistant",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/npolanosky/prusa_home_assistant/issues",
+  "requirements": [],
+  "version": "2.0.0"
+}
