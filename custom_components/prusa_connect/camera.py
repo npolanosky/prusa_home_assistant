@@ -25,10 +25,9 @@ async def async_setup_entry(
     if coordinator.printer_data.camera_url:
         entities.append(PrusaConnectCamera(coordinator))
 
-    # Current-print thumbnail preview (local PrusaLink only — the cloud API
-    # has no documented thumbnail URL).
-    if coordinator.is_local:
-        entities.append(PrusaConnectJobPreviewCamera(coordinator))
+    # Current-print thumbnail preview (works for both local PrusaLink via
+    # file.refs.thumbnail and cloud via job_info.preview_url).
+    entities.append(PrusaConnectJobPreviewCamera(coordinator))
 
     async_add_entities(entities)
 
@@ -66,19 +65,19 @@ class PrusaConnectJobPreviewCamera(PrusaConnectEntity, Camera):
 
     @property
     def available(self) -> bool:
-        return super().available and self.printer_data.thumbnail_path is not None
+        return super().available and self.printer_data.thumbnail_ref is not None
 
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
-        path = self.printer_data.thumbnail_path
-        if not path:
+        ref = self.printer_data.thumbnail_ref
+        if not ref:
             return None
-        # The preview is static for the duration of a print — cache by path.
-        if path == self._last_path and self._last_image is not None:
+        # The preview is static for the duration of a print — cache by ref.
+        if ref == self._last_path and self._last_image is not None:
             return self._last_image
         image = await self.coordinator.async_get_thumbnail()
         if image is not None:
-            self._last_path = path
+            self._last_path = ref
             self._last_image = image
         return image

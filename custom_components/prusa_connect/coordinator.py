@@ -165,10 +165,27 @@ class PrusaConnectData:
 
     @property
     def thumbnail_path(self) -> str | None:
+        # Local PrusaLink: file.refs.thumbnail / .icon (a printer-relative path).
         refs = self.job_file.get("refs") if self.job_file else None
         if isinstance(refs, dict):
             return refs.get("thumbnail") or refs.get("icon")
         return None
+
+    @property
+    def cloud_preview_url(self) -> str | None:
+        # Cloud: job_info.preview_url (an absolute connect.prusa3d.com URL).
+        if self.job:
+            url = self.job.get("preview_url") or self.job.get("preview")
+            if url:
+                return url
+        if self.job_file:
+            return self.job_file.get("preview_url")
+        return None
+
+    @property
+    def thumbnail_ref(self) -> str | None:
+        """Whichever thumbnail reference is available (local path or cloud URL)."""
+        return self.thumbnail_path or self.cloud_preview_url
 
     @property
     def is_printing(self) -> bool:
@@ -262,13 +279,18 @@ class PrusaConnectCoordinator(DataUpdateCoordinator[PrusaConnectData]):
         return self._local_client is not None
 
     async def async_get_thumbnail(self) -> bytes | None:
-        """Fetch the current print's thumbnail PNG (local connections only)."""
-        if not self._local_client:
-            return None
-        path = self.printer_data.thumbnail_path
-        if not path:
-            return None
-        return await self._local_client.get_image(path)
+        """Fetch the current print's thumbnail PNG (local or cloud)."""
+        if self._local_client:
+            path = self.printer_data.thumbnail_path
+            if not path:
+                return None
+            return await self._local_client.get_image(path)
+        if self._cloud_client:
+            url = self.printer_data.cloud_preview_url
+            if not url:
+                return None
+            return await self._cloud_client.get_image(url)
+        return None
 
     async def async_send_command(self, action: str) -> None:
         """Send a job control command (pause/resume/stop). Local only."""
