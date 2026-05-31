@@ -40,6 +40,7 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
         self._host: str = ""
         self._printers: list[dict[str, Any]] = []
         self._cloud_client: PrusaConnectClient | None = None
+        self._last_error_detail: str = ""
 
     @staticmethod
     @callback
@@ -52,7 +53,7 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the first step — choose connection type."""
         if user_input is not None:
             self._connection_type = user_input[CONF_CONNECTION_TYPE]
-            _LOGGER.debug("User selected connection type: %s", self._connection_type)
+            _LOGGER.warning("Prusa Connect: user selected connection type: %s", self._connection_type)
             if self._connection_type == CONNECTION_TYPE_LOCAL:
                 return await self.async_step_local()
             return await self.async_step_cloud()
@@ -64,7 +65,7 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_CONNECTION_TYPE, default=CONNECTION_TYPE_LOCAL): vol.In(
                         {
                             CONNECTION_TYPE_LOCAL: "Local (PrusaLink — connect via printer IP)",
-                            CONNECTION_TYPE_CLOUD: "Cloud (Prusa Connect — via API token)",
+                            CONNECTION_TYPE_CLOUD: "Cloud (Prusa Connect — via API key from connect.prusa3d.com)",
                         }
                     ),
                 }
@@ -76,14 +77,11 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle local PrusaLink connection setup."""
         errors: dict[str, str] = {}
-        description_placeholders: dict[str, str] = {
-            "api_key_help": "Find your API key in PrusaLink settings on the printer's web interface",
-        }
 
         if user_input is not None:
             host = user_input[CONF_HOST]
             api_key = user_input[CONF_API_KEY]
-            _LOGGER.debug("Attempting PrusaLink connection to %s", host)
+            _LOGGER.warning("Prusa Connect: attempting PrusaLink connection to %s", host)
 
             session = async_get_clientsession(self.hass)
             client = PrusaLinkClient(host, api_key, session)
@@ -93,20 +91,17 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
                 if not success:
                     _LOGGER.warning("PrusaLink validation failed: %s", detail)
                     errors["base"] = "cannot_connect"
-                    description_placeholders["error_detail"] = detail
+                    self._last_error_detail = detail
                 else:
-                    _LOGGER.info("PrusaLink validation succeeded: %s", detail)
+                    _LOGGER.warning("PrusaLink validation succeeded: %s", detail)
                     info = await client.get_info()
-                    _LOGGER.debug("PrusaLink info response: %s", info)
+                    _LOGGER.warning("PrusaLink info: %s", info)
 
                     printer_name = user_input.get(
                         CONF_PRINTER_NAME,
                         info.get("name", info.get("hostname", "Prusa Printer")),
                     )
                     serial = info.get("serial", host)
-                    _LOGGER.debug(
-                        "PrusaLink printer: name=%s serial=%s", printer_name, serial
-                    )
 
                     await self.async_set_unique_id(serial)
                     self._abort_if_unique_id_configured()
@@ -124,15 +119,23 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             except PrusaConnectAuthError as err:
                 _LOGGER.warning("PrusaLink auth error: %s", err)
                 errors["base"] = "invalid_auth"
-                description_placeholders["error_detail"] = str(err)
+                self._last_error_detail = str(err)
             except PrusaConnectError as err:
                 _LOGGER.warning("PrusaLink connection error: %s", err)
                 errors["base"] = "cannot_connect"
-                description_placeholders["error_detail"] = str(err)
+                self._last_error_detail = str(err)
             except Exception as err:
                 _LOGGER.exception("Unexpected error during PrusaLink setup")
                 errors["base"] = "cannot_connect"
-                description_placeholders["error_detail"] = f"Unexpected: {err}"
+                self._last_error_detail = f"Unexpected: {err}"
+
+        description = (
+            "Connect directly to your printer on the local network.\n\n"
+            "Find the API key in your printer's web interface at "
+            "**http://your-printer-ip** → Settings → API Key."
+        )
+        if self._last_error_detail:
+            description += f"\n\n**Last error:** {self._last_error_detail}"
 
         return self.async_show_form(
             step_id="local",
@@ -144,7 +147,9 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
-            description_placeholders=description_placeholders,
+            description_placeholders={
+                "error_detail": self._last_error_detail,
+            },
         )
 
     async def async_step_cloud(
@@ -152,16 +157,13 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle cloud Prusa Connect setup."""
         errors: dict[str, str] = {}
-        description_placeholders: dict[str, str] = {
-            "prusa_connect_url": "https://connect.prusa3d.com",
-        }
 
         if user_input is not None:
             token = user_input[CONF_API_KEY].strip()
-            _LOGGER.debug(
-                "Attempting Prusa Connect cloud auth (token length: %d, starts with: %s...)",
+            _LOGGER.warning(
+                "Prusa Connect: attempting cloud auth (key length: %d, starts: %s...)",
                 len(token),
-                token[:8] if len(token) > 8 else "***",
+                token[:4] if len(token) > 4 else "***",
             )
 
             session = async_get_clientsession(self.hass)
@@ -170,13 +172,13 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 success, detail = await client.validate()
                 if not success:
-                    _LOGGER.warning("Prusa Connect cloud validation failed: %s", detail)
+                    _LOGGER.warning("Prusa Connect cloud validation failed:\n%s", detail)
                     errors["base"] = "invalid_auth"
-                    description_placeholders["error_detail"] = detail
+                    self._last_error_detail = detail
                 else:
-                    _LOGGER.info("Prusa Connect cloud validation succeeded: %s", detail)
+                    _LOGGER.warning("Prusa Connect cloud validation succeeded: %s", detail)
                     printers = await client.get_printers()
-                    _LOGGER.debug(
+                    _LOGGER.warning(
                         "Prusa Connect returned %d printer(s): %s",
                         len(printers),
                         [
@@ -186,7 +188,7 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
                     )
                     if not printers:
                         errors["base"] = "no_printers"
-                        description_placeholders["error_detail"] = (
+                        self._last_error_detail = (
                             "API connected successfully but no printers were returned. "
                             "Make sure your printer is registered in Prusa Connect."
                         )
@@ -198,15 +200,25 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             except PrusaConnectAuthError as err:
                 _LOGGER.warning("Prusa Connect cloud auth error: %s", err)
                 errors["base"] = "invalid_auth"
-                description_placeholders["error_detail"] = str(err)
+                self._last_error_detail = str(err)
             except PrusaConnectError as err:
                 _LOGGER.warning("Prusa Connect cloud connection error: %s", err)
                 errors["base"] = "cannot_connect"
-                description_placeholders["error_detail"] = str(err)
+                self._last_error_detail = str(err)
             except Exception as err:
                 _LOGGER.exception("Unexpected error during Prusa Connect cloud setup")
                 errors["base"] = "cannot_connect"
-                description_placeholders["error_detail"] = f"Unexpected: {err}"
+                self._last_error_detail = f"Unexpected: {err}"
+
+        description = (
+            "Connect via the Prusa Connect cloud at "
+            "[https://connect.prusa3d.com](https://connect.prusa3d.com).\n\n"
+            "Find your API key at **connect.prusa3d.com** → select your printer → "
+            "**Settings** tab → scroll to **API keys**. "
+            "This is the same key used in PrusaSlicer and OrcaSlicer."
+        )
+        if self._last_error_detail:
+            description += f"\n\n**Last error:**\n{self._last_error_detail}"
 
         return self.async_show_form(
             step_id="cloud",
@@ -216,7 +228,10 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
-            description_placeholders=description_placeholders,
+            description_placeholders={
+                "prusa_connect_url": "https://connect.prusa3d.com",
+                "error_detail": self._last_error_detail,
+            },
         )
 
     async def async_step_select_printer(
@@ -227,7 +242,7 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             printer_uuid = user_input[CONF_PRINTER_UUID]
-            _LOGGER.debug("User selected printer UUID: %s", printer_uuid)
+            _LOGGER.warning("Prusa Connect: user selected printer UUID: %s", printer_uuid)
             printer = next(
                 (p for p in self._printers if self._get_uuid(p) == printer_uuid),
                 None,
@@ -246,8 +261,8 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
 
                 printer_name = printer.get("name", "Prusa Printer")
                 printer_type = printer.get("printerType", printer.get("printer_type", ""))
-                _LOGGER.info(
-                    "Creating entry for printer: name=%s type=%s uuid=%s",
+                _LOGGER.warning(
+                    "Prusa Connect: creating entry for printer: name=%s type=%s uuid=%s",
                     printer_name, printer_type, printer_uuid,
                 )
 
@@ -266,7 +281,6 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             self._get_uuid(p): self._get_printer_label(p)
             for p in self._printers
         }
-        _LOGGER.debug("Showing printer selection: %s", printer_options)
 
         return self.async_show_form(
             step_id="select_printer",

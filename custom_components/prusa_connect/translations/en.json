@@ -4,9 +4,9 @@
       "already_configured": "This printer is already configured"
     },
     "error": {
-      "invalid_auth": "Authentication failed — check your API key. Enable debug logging for details (see description below).",
-      "cannot_connect": "Unable to connect. Check your network and enable debug logging for details.",
-      "no_printers": "Connected successfully but no printers were found. Make sure your printer is registered in Prusa Connect.",
+      "invalid_auth": "Authentication failed — check your API key. Detailed error info is shown below.",
+      "cannot_connect": "Unable to connect. Detailed error info is shown below.",
+      "no_printers": "Connected successfully but no printers found. See details below.",
       "printer_not_found": "Selected printer could not be found."
     },
     "step": {
@@ -19,7 +19,7 @@
       },
       "local": {
         "title": "PrusaLink (Local Connection)",
-        "description": "Connect directly to your printer on the local network.\n\nFind the API key in your printer's web interface at **http://your-printer-ip** → Settings → API Key.\n\nFor debug logs, add to `configuration.yaml`:\n```\nlogger:\n  logs:\n    custom_components.prusa_connect: debug\n```",
+        "description": "Connect directly to your printer on the local network.\n\nFind the API key in your printer's web interface at **http://your-printer-ip** → Settings → API Key.",
         "data": {
           "host": "Printer IP address or hostname (e.g. 192.168.1.100)",
           "api_key": "API Key",
@@ -28,7 +28,7 @@
       },
       "cloud": {
         "title": "Prusa Connect (Cloud)",
-        "description": "Connect via the Prusa Connect cloud at [{prusa_connect_url}]({prusa_connect_url}).\n\nFind your API key at **connect.prusa3d.com** → select your printer → **Settings** tab → scroll to **API keys**. This is the same key used in PrusaSlicer and OrcaSlicer.\n\nFor debug logs, add to `configuration.yaml`:\n```\nlogger:\n  logs:\n    custom_components.prusa_connect: debug\n```",
+        "description": "Connect via the Prusa Connect cloud at [{prusa_connect_url}]({prusa_connect_url}).\n\nFind your API key at **connect.prusa3d.com** → select your printer → **Settings** tab → scroll to **API keys**. This is the same key used in PrusaSlicer and OrcaSlicer.",
         "data": {
           "api_key": "Prusa Connect API Key"
         }
