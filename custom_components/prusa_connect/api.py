@@ -2,13 +2,11 @@
 
 Supports two connection modes:
 - Local (PrusaLink): connects directly to printer on LAN via X-Api-Key header
-- Cloud (Prusa Connect): connects to connect.prusa3d.com
+- Cloud (Prusa Connect): connects to connect.prusa3d.com via per-printer API key
 
-Authentication notes:
-- PrusaLink local: X-Api-Key header (legacy API) or HTTP Digest (v1 API)
-- Prusa Connect cloud: X-Api-Key header (same key works against connect.prusa3d.com
-  for some endpoints), or Bearer token for OAuth2 account-level access.
-  OrcaSlicer and PrusaSlicer both use X-Api-Key against connect.prusa3d.com.
+The Prusa Connect API key is per-printer (not per-account). It authenticates
+via X-Api-Key header against connect.prusa3d.com/api/... endpoints.
+The printer UUID is required for most endpoints.
 """
 from __future__ import annotations
 
@@ -30,80 +28,33 @@ class PrusaConnectAuthError(PrusaConnectError):
     """Authentication error."""
 
 
-# Auth styles we try in order during validation
-AUTH_STYLES = [
-    {
-        "name": "X-Api-Key",
-        "header_key": "X-Api-Key",
-        "header_fmt": "{token}",
-    },
-    {
-        "name": "Bearer",
-        "header_key": "Authorization",
-        "header_fmt": "Bearer {token}",
-    },
-    {
-        "name": "Token",
-        "header_key": "Token",
-        "header_fmt": "{token}",
-    },
-]
-
-# Endpoint paths we try for listing printers, in order.
-# From PrusaSlicer ServiceConfig:
-#   /app/printers/           — connect_printers_url (Bearer, cloud)
-#   /slicer/v1/printers      — connect_printer_list_url (Bearer, cloud)
-# From OrcaSlicer/PrusaLink legacy:
-#   /api/version             — used by OctoPrint/PrusaLink classes (X-Api-Key)
-PRINTER_LIST_PATHS = [
-    "/app/printers/",
-    "/slicer/v1/printers",
-    "/slicer/status",
-]
-
-# If printer list paths all fail, we try a simple connectivity test
-CONNECTIVITY_TEST_PATHS = [
-    "/api/version",
-]
-
-
 class PrusaConnectClient:
     """Client for Prusa Connect cloud API.
 
-    Tries multiple auth styles and endpoint paths to find the one that
-    works with the user's token/key, since Prusa Connect has evolved
-    its API over time and different key types work with different endpoints.
+    Uses a per-printer API key with X-Api-Key header against
+    connect.prusa3d.com. The API key is scoped to a single printer
+    and must be paired with that printer's UUID.
     """
 
-    def __init__(self, token: str, session: aiohttp.ClientSession) -> None:
-        self._token = token.strip()
+    def __init__(self, api_key: str, session: aiohttp.ClientSession) -> None:
+        self._api_key = api_key.strip()
         self._session = session
         self._base_url = PRUSA_CONNECT_CLOUD_API
-        # Discovered during validate()
-        self._auth_header_key: str = "X-Api-Key"
-        self._auth_header_value: str = self._token
-        self._printer_list_path: str = "/app/printers/"
 
     def _get_headers(self) -> dict[str, str]:
         return {
-            self._auth_header_key: self._auth_header_value,
+            "X-Api-Key": self._api_key,
             "Accept": "application/json",
         }
 
     async def _request(
         self, method: str, path: str, label: str = "", **kwargs: Any
     ) -> tuple[int, Any]:
-        """Make a request and return (status_code, parsed_body_or_None).
-
-        Does NOT raise on HTTP errors — caller decides what to do.
-        """
+        """Make a request and return (status_code, parsed_body_or_None)."""
         url = f"{self._base_url}{path}"
         headers = self._get_headers()
         label = label or f"{method} {path}"
-        _LOGGER.debug(
-            "Prusa Connect request: %s %s (auth: %s)",
-            method, url, self._auth_header_key,
-        )
+        _LOGGER.debug("Prusa Connect request: %s %s", method, url)
         try:
             async with self._session.request(
                 method, url, headers=headers, allow_redirects=True, **kwargs
@@ -115,17 +66,10 @@ class PrusaConnectClient:
                 )
                 if resp.status >= 400:
                     _LOGGER.debug(
-                        "Prusa Connect %s error body: %s",
-                        label, body_text[:1000],
+                        "Prusa Connect %s error body: %s", label, body_text[:1000],
                     )
                 data = None
-                if resp.content_type and "json" in resp.content_type and body_text:
-                    try:
-                        import json
-                        data = json.loads(body_text)
-                    except Exception:
-                        pass
-                elif body_text.strip().startswith(("{", "[")):
+                if body_text.strip().startswith(("{", "[")):
                     try:
                         import json
                         data = json.loads(body_text)
@@ -137,38 +81,76 @@ class PrusaConnectClient:
             raise PrusaConnectError(f"Connection error: {err}") from err
 
     async def _authed_request(self, method: str, path: str, **kwargs: Any) -> Any:
-        """Make a request using the discovered auth, raising on errors."""
+        """Make a request, raising on auth/HTTP errors."""
         status, data = await self._request(method, path, **kwargs)
         if status in (401, 403):
-            raise PrusaConnectAuthError(
-                f"Auth failed (HTTP {status}) for {method} {path}"
-            )
+            raise PrusaConnectAuthError(f"Auth failed (HTTP {status}) for {method} {path}")
         if status >= 400:
             raise PrusaConnectError(f"HTTP {status} for {method} {path}")
         return data
 
-    async def get_printers(self) -> list[dict[str, Any]]:
-        """Get list of printers using the discovered endpoint."""
-        data = await self._authed_request("GET", self._printer_list_path)
-        return self._extract_printer_list(data)
+    async def validate_key(self) -> tuple[bool, str]:
+        """Validate the API key works against connect.prusa3d.com."""
+        _LOGGER.warning("Prusa Connect: validating API key against /api/version")
+        try:
+            status, data = await self._request("GET", "/api/version", label="validate")
+            if status == 200 and data:
+                server = data.get("server", "unknown")
+                text = data.get("text", "PrusaConnect")
+                msg = f"API key valid — connected to {text} {server}"
+                _LOGGER.warning("Prusa Connect: %s", msg)
+                return True, msg
+            elif status in (401, 403):
+                msg = f"API key rejected (HTTP {status})"
+                _LOGGER.warning("Prusa Connect: %s", msg)
+                return False, msg
+            else:
+                msg = f"Unexpected response: HTTP {status}"
+                _LOGGER.warning("Prusa Connect: %s", msg)
+                return False, msg
+        except PrusaConnectError as err:
+            return False, f"Connection failed: {err}"
+
+    async def validate_printer(self, printer_uuid: str) -> tuple[bool, str]:
+        """Validate the API key works for a specific printer UUID."""
+        _LOGGER.warning(
+            "Prusa Connect: validating printer UUID %s", printer_uuid
+        )
+        try:
+            status, data = await self._request(
+                "GET", f"/app/printers/{printer_uuid}",
+                label=f"validate printer {printer_uuid}",
+            )
+            if status == 200 and data:
+                name = data.get("name", data.get("hostname", ""))
+                ptype = data.get("printer_type", data.get("type", ""))
+                state = data.get("state", "")
+                msg = f"Printer found: {name} ({ptype}) [{state}]"
+                _LOGGER.warning("Prusa Connect: %s", msg)
+                return True, msg
+            elif status in (401, 403):
+                return False, f"API key not authorized for printer {printer_uuid} (HTTP {status})"
+            elif status == 404:
+                return False, f"Printer UUID {printer_uuid} not found (HTTP 404)"
+            else:
+                body_msg = ""
+                if data and isinstance(data, dict):
+                    body_msg = data.get("message", "")
+                return False, f"HTTP {status}: {body_msg}"
+        except PrusaConnectError as err:
+            return False, f"Connection error: {err}"
 
     async def get_printer(self, printer_uuid: str) -> dict[str, Any]:
         """Get printer details."""
         return await self._authed_request("GET", f"/app/printers/{printer_uuid}")
 
     async def get_printer_status(self, printer_uuid: str) -> dict[str, Any]:
-        """Get printer status - try multiple endpoint patterns."""
-        for path in [
-            f"/app/printers/{printer_uuid}/status",
-            f"/app/printers/{printer_uuid}",
-        ]:
-            try:
-                data = await self._authed_request("GET", path)
-                if data:
-                    return data
-            except PrusaConnectError:
-                continue
-        return {}
+        """Get printer status."""
+        try:
+            return await self._authed_request("GET", f"/app/printers/{printer_uuid}/status")
+        except PrusaConnectError:
+            # Fall back to main printer endpoint
+            return await self._authed_request("GET", f"/app/printers/{printer_uuid}")
 
     async def get_jobs(self, printer_uuid: str) -> list[dict[str, Any]]:
         """Get current jobs for a printer."""
@@ -191,128 +173,12 @@ class PrusaConnectClient:
                 continue
         return []
 
-    def _extract_printer_list(self, data: Any) -> list[dict[str, Any]]:
-        """Extract a list of printers from various response formats."""
-        if isinstance(data, list):
-            _LOGGER.debug("Printers response: list with %d items", len(data))
-            return data
-        if isinstance(data, dict):
-            for key in ("member", "printers", "data"):
-                if key in data and isinstance(data[key], list):
-                    items = data[key]
-                    _LOGGER.debug(
-                        "Printers response: dict.%s with %d items", key, len(items)
-                    )
-                    return items
-            # Single printer object
-            if any(k in data for k in ("uuid", "sn", "serial", "name")):
-                _LOGGER.debug("Printers response: single printer object")
-                return [data]
-            _LOGGER.debug(
-                "Printers response: dict with unrecognized keys: %s",
-                list(data.keys())[:10],
-            )
-        _LOGGER.warning("Unexpected printers response type: %s", type(data))
-        return []
-
-    async def validate(self) -> tuple[bool, str]:
-        """Try all auth styles × endpoint paths to find a working combination.
-
-        Returns (success, detail_message).
-        """
-        attempts: list[str] = []
-
-        for style in AUTH_STYLES:
-            self._auth_header_key = style["header_key"]
-            self._auth_header_value = style["header_fmt"].format(token=self._token)
-
-            for path in PRINTER_LIST_PATHS:
-                label = f'{style["name"]} → {path}'
-                _LOGGER.info("Prusa Connect: trying %s", label)
-
-                try:
-                    status, data = await self._request(
-                        "GET", path, label=label
-                    )
-                except PrusaConnectError as err:
-                    msg = f"{label}: connection error ({err})"
-                    _LOGGER.debug(msg)
-                    attempts.append(msg)
-                    continue
-
-                if status in (401, 403):
-                    msg = f"{label}: HTTP {status} (auth rejected)"
-                    _LOGGER.debug(msg)
-                    attempts.append(msg)
-                    continue
-
-                if status == 404:
-                    msg = f"{label}: HTTP 404 (endpoint not found)"
-                    _LOGGER.debug(msg)
-                    attempts.append(msg)
-                    continue
-
-                if status >= 400:
-                    msg = f"{label}: HTTP {status}"
-                    _LOGGER.debug(msg)
-                    attempts.append(msg)
-                    continue
-
-                # Success — extract printers
-                printers = self._extract_printer_list(data)
-                self._printer_list_path = path
-                result = (
-                    f'{style["name"]} auth with {path} succeeded — '
-                    f"found {len(printers)} printer(s)"
-                )
-                _LOGGER.info("Prusa Connect: %s", result)
-                return True, result
-
-        # Printer list endpoints all failed. Try connectivity test endpoints
-        # (like /api/version which OrcaSlicer uses) to distinguish auth errors
-        # from network errors.
-        for style in AUTH_STYLES:
-            self._auth_header_key = style["header_key"]
-            self._auth_header_value = style["header_fmt"].format(token=self._token)
-
-            for path in CONNECTIVITY_TEST_PATHS:
-                label = f'{style["name"]} → {path} (connectivity test)'
-                _LOGGER.info("Prusa Connect: trying %s", label)
-
-                try:
-                    status, data = await self._request("GET", path, label=label)
-                except PrusaConnectError as err:
-                    attempts.append(f"{label}: connection error ({err})")
-                    continue
-
-                if status == 200 and data:
-                    msg = (
-                        f'{style["name"]} auth works for {path} '
-                        f"(got: {list(data.keys()) if isinstance(data, dict) else type(data).__name__}), "
-                        f"but no printer list endpoint responded. "
-                        f"Your API key may be a local PrusaLink key — "
-                        f"try using the Local connection mode instead with your printer's IP address."
-                    )
-                    _LOGGER.warning("Prusa Connect: %s", msg)
-                    attempts.append(msg)
-                elif status in (401, 403):
-                    attempts.append(f"{label}: HTTP {status} (auth rejected)")
-                else:
-                    attempts.append(f"{label}: HTTP {status}")
-
-        # All failed
-        summary = "All authentication attempts failed:\n" + "\n".join(
-            f"  • {a}" for a in attempts
-        )
-        _LOGGER.warning("Prusa Connect validation failed. %s", summary)
-        return False, summary
-
 
 class PrusaLinkClient:
     """Client for PrusaLink local API on the printer.
 
-    Uses the legacy X-Api-Key header for auth. The v1 API uses HTTP Digest
-    but X-Api-Key works for all the endpoints we need.
+    Uses X-Api-Key header for authentication against the printer's
+    local web interface.
     """
 
     def __init__(self, host: str, api_key: str, session: aiohttp.ClientSession) -> None:
@@ -386,23 +252,18 @@ class PrusaLinkClient:
             ) as resp:
                 if resp.status == 200:
                     return await resp.read()
-                _LOGGER.debug("Camera snap failed: HTTP %s", resp.status)
                 return None
-        except aiohttp.ClientError as err:
-            _LOGGER.debug("Camera snap error: %s", err)
+        except aiohttp.ClientError:
             return None
 
     async def validate(self) -> tuple[bool, str]:
-        """Validate the API key.
-
-        Returns (success, detail_message).
-        """
+        """Validate the API key."""
         try:
             version_data = await self.get_version()
             server = version_data.get("server", "unknown")
             text = version_data.get("text", "")
             msg = f"Connected to {text} {server} at {self._host}"
-            _LOGGER.info("PrusaLink: %s", msg)
+            _LOGGER.warning("PrusaLink: %s", msg)
             return True, msg
         except PrusaConnectAuthError as err:
             return False, f"Authentication failed: {err}"

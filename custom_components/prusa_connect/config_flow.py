@@ -173,182 +173,146 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_cloud(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle cloud Prusa Connect setup."""
+        """Handle cloud Prusa Connect setup.
+
+        The Prusa Connect API key is per-printer, so we need both
+        the API key and the printer UUID to connect.
+        """
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            token = user_input[CONF_API_KEY].strip()
+            api_key = user_input[CONF_API_KEY].strip()
+            printer_uuid = user_input.get(CONF_PRINTER_UUID, "").strip()
             printer_name = user_input.get(CONF_PRINTER_NAME, "").strip()
             _LOGGER.warning(
-                "Prusa Connect: attempting cloud auth (key length: %d, starts: %s...)",
-                len(token),
-                token[:4] if len(token) > 4 else "***",
+                "Prusa Connect: attempting cloud auth (key length: %d, uuid: %s)",
+                len(api_key), printer_uuid or "(not provided)",
             )
 
             session = async_get_clientsession(self.hass)
-            client = PrusaConnectClient(token, session)
+            client = PrusaConnectClient(api_key, session)
 
-            validated = False
-            try:
-                success, detail = await client.validate()
-                if success:
-                    _LOGGER.warning("Prusa Connect cloud validation succeeded: %s", detail)
-                    printers = await client.get_printers()
-                    _LOGGER.warning(
-                        "Prusa Connect returned %d printer(s): %s",
-                        len(printers),
-                        [
-                            {k: p.get(k) for k in ("uuid", "name", "state", "printerType", "sn") if k in p}
-                            for p in printers
-                        ],
-                    )
-                    if printers:
-                        self._api_key = token
-                        self._printers = printers
-                        self._cloud_client = client
-                        self._last_error_detail = ""
-                        return await self.async_step_select_printer()
-                    else:
-                        self._last_error_detail = (
-                            "API connected successfully but no printers were returned. "
-                            "Make sure your printer is registered in Prusa Connect."
-                        )
-                else:
-                    _LOGGER.warning("Prusa Connect cloud validation failed:\n%s", detail)
-                    self._last_error_detail = detail
-            except PrusaConnectAuthError as err:
-                _LOGGER.warning("Prusa Connect cloud auth error: %s", err)
-                self._last_error_detail = str(err)
-            except PrusaConnectError as err:
-                _LOGGER.warning("Prusa Connect cloud connection error: %s", err)
-                self._last_error_detail = str(err)
-            except Exception as err:
-                _LOGGER.exception("Unexpected error during Prusa Connect cloud setup")
-                self._last_error_detail = f"Unexpected: {err}"
-
-            if not self._validation_failed:
-                # First failure — show error, let them retry or save
-                self._validation_failed = True
-                self._api_key = token
+            # Step 1: Validate the API key
+            key_ok, key_detail = await client.validate_key()
+            if not key_ok:
+                _LOGGER.warning("Prusa Connect: API key validation failed: %s", key_detail)
+                self._last_error_detail = key_detail
+                self._api_key = api_key
                 self._printer_name = printer_name
-                errors["base"] = "invalid_auth"
-            else:
-                # Second attempt — save anyway without validation
-                final_name = printer_name or "Prusa Printer (Cloud)"
 
-                return self.async_create_entry(
-                    title=final_name,
-                    data={
-                        CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD,
-                        CONF_API_KEY: token,
-                        CONF_PRINTER_UUID: "",
-                        CONF_PRINTER_NAME: final_name,
-                        CONF_PRINTER_TYPE: "",
-                    },
-                )
+                if not self._validation_failed:
+                    self._validation_failed = True
+                    errors["base"] = "invalid_auth"
+                else:
+                    # Second attempt — save anyway
+                    return self._create_cloud_entry(
+                        api_key, printer_uuid, printer_name, ""
+                    )
+            else:
+                _LOGGER.warning("Prusa Connect: API key valid: %s", key_detail)
+
+                # Step 2: If UUID provided, validate it
+                if printer_uuid:
+                    printer_ok, printer_detail = await client.validate_printer(printer_uuid)
+                    if printer_ok:
+                        _LOGGER.warning("Prusa Connect: printer validated: %s", printer_detail)
+                        self._last_error_detail = ""
+
+                        # Try to get printer info for name/type
+                        detected_name = ""
+                        printer_type = ""
+                        try:
+                            data = await client.get_printer(printer_uuid)
+                            detected_name = data.get("name", data.get("hostname", ""))
+                            printer_type = data.get("printer_type", data.get("type", ""))
+                        except PrusaConnectError:
+                            pass
+
+                        return self._create_cloud_entry(
+                            api_key, printer_uuid,
+                            printer_name or detected_name,
+                            printer_type,
+                        )
+                    else:
+                        _LOGGER.warning("Prusa Connect: printer validation failed: %s", printer_detail)
+                        self._last_error_detail = printer_detail
+                        self._api_key = api_key
+                        self._printer_name = printer_name
+
+                        if not self._validation_failed:
+                            self._validation_failed = True
+                            errors["base"] = "cannot_connect"
+                        else:
+                            return self._create_cloud_entry(
+                                api_key, printer_uuid, printer_name, ""
+                            )
+                else:
+                    # No UUID provided — tell user they need it
+                    self._last_error_detail = (
+                        "API key is valid, but a Printer UUID is required. "
+                        "Find it at connect.prusa3d.com → select your printer → "
+                        "Settings tab → the UUID is shown in the URL or settings."
+                    )
+                    self._api_key = api_key
+                    self._printer_name = printer_name
+                    errors["base"] = "cannot_connect"
 
         description = (
             "Connect via the Prusa Connect cloud at "
             "[https://connect.prusa3d.com](https://connect.prusa3d.com).\n\n"
-            "Find your API key at **connect.prusa3d.com** → select your printer → "
-            "**Settings** tab → scroll to **API keys**. "
-            "This is the same key used in PrusaSlicer and OrcaSlicer."
+            "The API key is **per-printer**. Find both values at "
+            "**connect.prusa3d.com** → select your printer → **Settings** tab:\n"
+            "- **API Key**: under API keys section\n"
+            "- **Printer UUID**: shown in the browser URL bar "
+            "(e.g. `connect.prusa3d.com/printer/`**`abc123-def456`**`/settings`)"
         )
         if self._last_error_detail:
             description += (
-                f"\n\n**Last error:**\n{self._last_error_detail}"
-                "\n\n**Submit again to save anyway** — you can fix the connection "
-                "later in the integration options. Add a printer name below if saving without connection."
+                f"\n\n**Last result:**\n{self._last_error_detail}"
             )
-
-        schema_fields: dict = {
-            vol.Required(CONF_API_KEY, default=self._api_key): str,
-        }
-        if self._validation_failed:
-            schema_fields[vol.Optional(CONF_PRINTER_NAME, default=self._printer_name or vol.UNDEFINED)] = str
+            if self._validation_failed:
+                description += (
+                    "\n\n**Submit again to save anyway** — you can fix the "
+                    "connection later in the integration options."
+                )
 
         return self.async_show_form(
             step_id="cloud",
-            data_schema=vol.Schema(schema_fields),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_API_KEY, default=self._api_key): str,
+                    vol.Required(CONF_PRINTER_UUID, default=""): str,
+                    vol.Optional(CONF_PRINTER_NAME, default=self._printer_name or vol.UNDEFINED): str,
+                }
+            ),
             errors=errors,
             description_placeholders={
                 "prusa_connect_url": "https://connect.prusa3d.com",
             },
         )
 
-    async def async_step_select_printer(
-        self, user_input: dict[str, Any] | None = None
+    def _create_cloud_entry(
+        self, api_key: str, printer_uuid: str, printer_name: str, printer_type: str
     ) -> FlowResult:
-        """Handle printer selection step for cloud connection."""
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
-            printer_uuid = user_input[CONF_PRINTER_UUID]
-            _LOGGER.warning("Prusa Connect: user selected printer UUID: %s", printer_uuid)
-            printer = next(
-                (p for p in self._printers if self._get_uuid(p) == printer_uuid),
-                None,
-            )
-
-            if printer is None:
-                _LOGGER.error(
-                    "Selected UUID %s not found in printer list: %s",
-                    printer_uuid,
-                    [self._get_uuid(p) for p in self._printers],
-                )
-                errors["base"] = "printer_not_found"
-            else:
-                await self.async_set_unique_id(printer_uuid)
-                self._abort_if_unique_id_configured()
-
-                printer_name = printer.get("name", "Prusa Printer")
-                printer_type = printer.get("printerType", printer.get("printer_type", ""))
-                _LOGGER.warning(
-                    "Prusa Connect: creating entry for printer: name=%s type=%s uuid=%s",
-                    printer_name, printer_type, printer_uuid,
-                )
-
-                return self.async_create_entry(
-                    title=printer_name,
-                    data={
-                        CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD,
-                        CONF_API_KEY: self._api_key,
-                        CONF_PRINTER_UUID: printer_uuid,
-                        CONF_PRINTER_NAME: printer_name,
-                        CONF_PRINTER_TYPE: printer_type,
-                    },
-                )
-
-        printer_options = {
-            self._get_uuid(p): self._get_printer_label(p)
-            for p in self._printers
-        }
-
-        return self.async_show_form(
-            step_id="select_printer",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_PRINTER_UUID): vol.In(printer_options),
-                }
-            ),
-            errors=errors,
+        """Create a config entry for cloud connection."""
+        final_name = printer_name or "Prusa Printer (Cloud)"
+        _LOGGER.warning(
+            "Prusa Connect: creating cloud entry: name=%s uuid=%s type=%s",
+            final_name, printer_uuid, printer_type,
+        )
+        return self.async_create_entry(
+            title=final_name,
+            data={
+                CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD,
+                CONF_API_KEY: api_key,
+                CONF_PRINTER_UUID: printer_uuid,
+                CONF_PRINTER_NAME: final_name,
+                CONF_PRINTER_TYPE: printer_type,
+            },
         )
 
-    @staticmethod
-    def _get_uuid(printer: dict) -> str:
-        return printer.get("uuid", printer.get("id", printer.get("sn", "")))
-
-    @staticmethod
-    def _get_printer_label(printer: dict) -> str:
-        name = printer.get("name", "Unknown")
-        ptype = printer.get("printerType", printer.get("printer_type", ""))
-        state = printer.get("state", "")
-        parts = [name]
-        if ptype:
-            parts.append(f"({ptype})")
-        if state:
-            parts.append(f"[{state}]")
-        return " ".join(parts)
+    # No async_step_select_printer needed — the Prusa Connect API key is
+    # per-printer, so the user enters the UUID directly in the cloud step.
 
 
 class PrusaConnectOptionsFlow(OptionsFlow):
