@@ -32,10 +32,12 @@ from .const import (
     CONF_AUTH_CODE,
     CONF_CONNECTION_TYPE,
     CONF_HOST,
+    CONF_PASSWORD,
     CONF_PRINTER_NAME,
     CONF_PRINTER_TYPE,
     CONF_PRINTER_UUID,
     CONF_REFRESH_TOKEN,
+    CONF_USERNAME,
     CONNECTION_TYPE_CLOUD,
     CONNECTION_TYPE_LOCAL,
     DOMAIN,
@@ -191,6 +193,52 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_cloud(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
+        """Choose how to log in to Prusa Connect: password or browser."""
+        return self.async_show_menu(
+            step_id="cloud",
+            menu_options=["cloud_password", "cloud_browser"],
+        )
+
+    async def async_step_cloud_password(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Log in with Prusa account email + password (no browser needed)."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            username = user_input.get(CONF_USERNAME, "").strip()
+            password = user_input.get(CONF_PASSWORD, "")
+            session = async_get_clientsession(self.hass)
+            client = PrusaConnectClient(session)
+            ok, detail = await client.async_login_password(username, password)
+            if not ok:
+                errors["base"] = "invalid_auth"
+                self._last_error_detail = detail
+            else:
+                self._access_token = client.access_token or ""
+                self._refresh_token = client.refresh_token or ""
+                try:
+                    self._printers = await client.get_printers()
+                except PrusaConnectError as err:
+                    _LOGGER.warning("Prusa Connect: get_printers failed: %s", err)
+                    self._printers = []
+                return await self.async_step_select_printer()
+
+        return self.async_show_form(
+            step_id="cloud_password",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_USERNAME): str,
+                    vol.Required(CONF_PASSWORD): str,
+                }
+            ),
+            errors=errors,
+            description_placeholders={"error_detail": self._last_error_detail},
+        )
+
+    async def async_step_cloud_browser(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Show the login link and accept the pasted authorization code."""
         errors: dict[str, str] = {}
 
@@ -239,7 +287,7 @@ class PrusaConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             description += f"\n\n**Last error:** {self._last_error_detail}"
 
         return self.async_show_form(
-            step_id="cloud",
+            step_id="cloud_browser",
             data_schema=vol.Schema({vol.Required(CONF_AUTH_CODE): str}),
             errors=errors,
             description_placeholders={"authorize_url": authorize_url},

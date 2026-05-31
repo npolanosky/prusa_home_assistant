@@ -51,7 +51,23 @@
       },
       "cloud": {
         "title": "Prusa Connect (Cloud Login)",
-        "description": "**Step 1.** Open the login link and sign in with your Prusa account, then approve access.\n\n**Step 2.** Your browser will try to open a `prusaslicer://login…` link and show an error — that's expected. Copy the **entire URL** from the address bar (it contains `?code=…`) and paste it below. You can also paste just the code value.\n\n[Log in to Prusa Connect]({authorize_url})",
+        "description": "Choose how to sign in to your Prusa account.",
+        "menu_options": {
+          "cloud_password": "Email & password (easiest)",
+          "cloud_browser": "Browser login (use if you have two-factor auth)"
+        }
+      },
+      "cloud_password": {
+        "title": "Prusa Account Login",
+        "description": "Sign in with your Prusa account. Your password is used once to obtain access tokens and is **not stored** — only the tokens are saved.\n\nIf your account uses two-factor authentication, go back and choose **Browser login** instead.",
+        "data": {
+          "username": "Prusa account email",
+          "password": "Password"
+        }
+      },
+      "cloud_browser": {
+        "title": "Prusa Connect (Browser Login)",
+        "description": "**Step 1.** Open the login link and sign in with your Prusa account, then approve access.\n\n**Step 2.** Your browser will try to open a `prusaslicer://login…` link and show an error — that's expected. Copy the **entire URL** from the address bar (it contains `?code=…`) and paste it below. You can also paste just the code value.\n\nTip: if your browser hides the URL, open the link on a device that does **not** have PrusaSlicer installed (e.g. your phone), where the full `prusaslicer://login?code=…` will be shown.\n\n[Log in to Prusa Connect]({authorize_url})",
         "data": {
           "auth_code": "Pasted redirect URL or authorization code"
         }

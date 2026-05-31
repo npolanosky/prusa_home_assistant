@@ -10,6 +10,8 @@ CONF_PRINTER_NAME = "printer_name"
 CONF_PRINTER_TYPE = "printer_type"
 CONF_CONNECTION_TYPE = "connection_type"
 CONF_AUTH_CODE = "auth_code"
+CONF_USERNAME = "username"
+CONF_PASSWORD = "password"
 CONF_ACCESS_TOKEN = "access_token"
 CONF_REFRESH_TOKEN = "refresh_token"
 

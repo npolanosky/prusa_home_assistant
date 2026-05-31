@@ -109,7 +109,22 @@ class PrusaConnectData:
 
     @property
     def material(self) -> str | None:
-        return self.printer_status.get("material") or self.printer_info.get("material")
+        # Cloud nests material under "filament" and under the active tool.
+        direct = self.printer_status.get("material") or self.printer_info.get("material")
+        if direct:
+            return direct
+        filament = self.printer_info.get("filament")
+        if isinstance(filament, dict) and filament.get("material"):
+            return filament["material"]
+        tools = self.printer_info.get("tools")
+        if isinstance(tools, dict):
+            for tool in tools.values():
+                if isinstance(tool, dict) and tool.get("active") and tool.get("material"):
+                    return tool["material"]
+            for tool in tools.values():
+                if isinstance(tool, dict) and tool.get("material"):
+                    return tool["material"]
+        return None
 
     @property
     def project_name(self) -> str | None:
@@ -309,7 +324,14 @@ class PrusaConnectCoordinator(DataUpdateCoordinator[PrusaConnectData]):
 
         status = await client.get_status()
         self.printer_data.status = status
-        self.printer_data.printer_status = status.get("printer", status)
+        # Flatten nested sub-objects (printer/temp) so the data properties find
+        # values regardless of nesting, matching the cloud path.
+        merged: dict[str, Any] = dict(status)
+        for sub_key in ("printer", "temp"):
+            sub = status.get(sub_key)
+            if isinstance(sub, dict):
+                merged.update(sub)
+        self.printer_data.printer_status = merged
 
         job_data = status.get("job")
         if job_data:
@@ -340,15 +362,19 @@ class PrusaConnectCoordinator(DataUpdateCoordinator[PrusaConnectData]):
         _LOGGER.debug("Prusa Connect raw printer payload: %s", printer)
         self.printer_data.printer_info = printer
 
-        # The cloud payload nests live values under "telemetry"; flatten them so
-        # the normalizing properties on PrusaConnectData can find them. Some
-        # responses also nest under "printer" or "status".
-        telemetry = (
-            printer.get("telemetry")
-            or printer.get("printer")
-            or {}
-        )
-        merged = {**printer, **telemetry} if isinstance(telemetry, dict) else dict(printer)
+        # The cloud payload nests live values under sub-objects. Confirmed
+        # shape (firmware 6.x via Connect):
+        #   top-level: state, axis_x/y/z, flow, speed, printer_state, ...
+        #   "temp":    {temp_nozzle, temp_bed, target_nozzle, target_bed}
+        #   "filament":{material}
+        #   "telemetry"/"printer": present on some firmwares
+        # Flatten all of these into one dict so the normalizing properties on
+        # PrusaConnectData find them regardless of nesting.
+        merged: dict[str, Any] = dict(printer)
+        for sub_key in ("telemetry", "printer", "temp"):
+            sub = printer.get(sub_key)
+            if isinstance(sub, dict):
+                merged.update(sub)
         self.printer_data.printer_status = merged
         self.printer_data.status = merged
 
