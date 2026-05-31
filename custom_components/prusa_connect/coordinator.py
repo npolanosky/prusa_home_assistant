@@ -12,10 +12,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import PrusaConnectClient, PrusaConnectError, PrusaLinkClient
 from .const import (
+    CONF_ACCESS_TOKEN,
     CONF_API_KEY,
     CONF_CONNECTION_TYPE,
     CONF_HOST,
     CONF_PRINTER_UUID,
+    CONF_REFRESH_TOKEN,
     CONNECTION_TYPE_LOCAL,
     DOMAIN,
 )
@@ -185,6 +187,8 @@ class PrusaConnectCoordinator(DataUpdateCoordinator[PrusaConnectData]):
         self._connection_type = entry.data.get(CONF_CONNECTION_TYPE, CONNECTION_TYPE_LOCAL)
         session = async_get_clientsession(hass)
 
+        self._entry = entry
+
         if self._connection_type == CONNECTION_TYPE_LOCAL:
             self._local_client = PrusaLinkClient(
                 entry.data[CONF_HOST], entry.data[CONF_API_KEY], session
@@ -193,8 +197,13 @@ class PrusaConnectCoordinator(DataUpdateCoordinator[PrusaConnectData]):
             self._printer_uuid = None
         else:
             self._local_client = None
-            self._cloud_client = PrusaConnectClient(entry.data[CONF_API_KEY], session)
-            self._printer_uuid = entry.data[CONF_PRINTER_UUID]
+            self._cloud_client = PrusaConnectClient(
+                session,
+                access_token=entry.data.get(CONF_ACCESS_TOKEN),
+                refresh_token=entry.data.get(CONF_REFRESH_TOKEN),
+                token_updated=self._async_persist_tokens,
+            )
+            self._printer_uuid = entry.data.get(CONF_PRINTER_UUID)
 
         self.printer_data = PrusaConnectData()
 
@@ -208,6 +217,19 @@ class PrusaConnectCoordinator(DataUpdateCoordinator[PrusaConnectData]):
             update_interval=interval,
             config_entry=entry,
         )
+
+    async def _async_persist_tokens(self, access_token: str, refresh_token: str) -> None:
+        """Persist refreshed OAuth tokens back to the config entry."""
+        new_data = dict(self._entry.data)
+        if (
+            new_data.get(CONF_ACCESS_TOKEN) == access_token
+            and new_data.get(CONF_REFRESH_TOKEN) == refresh_token
+        ):
+            return
+        new_data[CONF_ACCESS_TOKEN] = access_token
+        new_data[CONF_REFRESH_TOKEN] = refresh_token
+        self.hass.config_entries.async_update_entry(self._entry, data=new_data)
+        _LOGGER.debug("Prusa Connect: persisted refreshed OAuth tokens")
 
     async def _async_update_data(self) -> PrusaConnectData:
         try:
@@ -246,34 +268,35 @@ class PrusaConnectCoordinator(DataUpdateCoordinator[PrusaConnectData]):
     async def _update_cloud(self) -> None:
         client = self._cloud_client
         uuid = self._printer_uuid
-        assert client is not None and uuid is not None
+        assert client is not None
 
-        # Try to get printer info and status
-        try:
-            printer = await client.get_printer(uuid)
-            self.printer_data.printer_info = printer
-            self.printer_data.printer_status = printer
-            self.printer_data.status = printer
-        except PrusaConnectError as err:
-            _LOGGER.debug("Failed to get printer %s: %s", uuid, err)
-            # Try status endpoint separately
+        # If we don't have a UUID yet, try to discover the first printer.
+        if not uuid:
+            printers = await client.get_printers()
+            if not printers:
+                raise PrusaConnectError("No printers found on the Prusa account.")
+            uuid = printers[0].get("uuid") or printers[0].get("printer_uuid")
+            self._printer_uuid = uuid
+
+        printer = await client.get_printer(uuid)
+        self.printer_data.printer_info = printer
+
+        # The cloud payload nests live values under "telemetry"; flatten them so
+        # the normalizing properties on PrusaConnectData can find them.
+        telemetry = printer.get("telemetry") or {}
+        merged = {**printer, **telemetry}
+        self.printer_data.printer_status = merged
+        self.printer_data.status = merged
+
+        # Job info may be inline on the printer payload or via the jobs endpoint.
+        job = printer.get("job_info") or printer.get("job")
+        if not job:
             try:
-                status = await client.get_printer_status(uuid)
-                self.printer_data.status = status
-                self.printer_data.printer_status = status
-            except PrusaConnectError as err2:
-                _LOGGER.warning("Failed to get printer status %s: %s", uuid, err2)
-                raise
+                jobs = await client.get_jobs(uuid)
+                job = jobs[0] if jobs else None
+            except PrusaConnectError as err:
+                _LOGGER.debug("Failed to get jobs for %s: %s", uuid, err)
+                job = None
 
-        try:
-            jobs = await client.get_jobs(uuid)
-            if jobs:
-                self.printer_data.job = jobs[0]
-                self.printer_data.job_file = jobs[0].get("file", {})
-            else:
-                self.printer_data.job = None
-                self.printer_data.job_file = {}
-        except PrusaConnectError as err:
-            _LOGGER.debug("Failed to get jobs for %s: %s", uuid, err)
-            self.printer_data.job = None
-            self.printer_data.job_file = {}
+        self.printer_data.job = job
+        self.printer_data.job_file = (job or {}).get("file", {}) if job else {}

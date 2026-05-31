@@ -4,10 +4,11 @@
       "already_configured": "This printer is already configured"
     },
     "error": {
-      "invalid_auth": "API key rejected — see error details below. Submit again to save anyway.",
+      "invalid_auth": "Login failed — see error details below and try again.",
       "cannot_connect": "Connection issue — see details below. Submit again to save anyway.",
-      "no_printers": "Connected but no printers found. See details below.",
-      "printer_not_found": "Printer UUID not found."
+      "invalid_code": "No authorization code was found in what you pasted.",
+      "no_printer_selected": "Please select a printer or enter a UUID.",
+      "no_printers": "Connected but no printers found. See details below."
     },
     "step": {
       "user": {
@@ -27,27 +28,44 @@
         }
       },
       "cloud": {
-        "title": "Prusa Connect (Cloud)",
-        "description": "Connect via the Prusa Connect cloud at [{prusa_connect_url}]({prusa_connect_url}).\n\nThe API key is per-printer. Find both values at connect.prusa3d.com → select your printer → Settings tab.",
+        "title": "Prusa Connect (Cloud Login)",
+        "description": "**Step 1.** Open the login link and sign in with your Prusa account, then approve access.\n\n**Step 2.** Your browser will try to open a `prusaslicer://login…` link and show an error — that's expected. Copy the **entire URL** from the address bar (it contains `?code=…`) and paste it below. You can also paste just the code value.\n\n[Log in to Prusa Connect]({authorize_url})",
         "data": {
-          "api_key": "Prusa Connect API Key",
-          "printer_uuid": "Printer UUID (from URL or settings page)",
-          "printer_name": "Printer name (optional, auto-detected)"
+          "auth_code": "Pasted redirect URL or authorization code"
+        }
+      },
+      "select_printer": {
+        "title": "Select Printer",
+        "description": "Select the printer you want to add to Home Assistant.",
+        "data": {
+          "printer_uuid": "Printer",
+          "printer_name": "Printer name (optional)"
         }
       }
     }
   },
   "options": {
+    "error": {
+      "invalid_auth": "Login failed — please try again."
+    },
     "step": {
       "init": {
         "title": "Prusa Connect Configuration",
-        "description": "Update your connection settings. Changes will reload the integration automatically.",
+        "description": "Update your connection settings. Changes reload the integration automatically. For cloud connections, tick \"Re-authenticate\" to log in again.",
         "data": {
           "host": "Printer IP address or hostname",
           "api_key": "API Key",
           "printer_name": "Printer name",
           "printer_uuid": "Printer UUID",
+          "reauth": "Re-authenticate (log in to Prusa account again)",
           "scan_interval": "Update interval (seconds)"
+        }
+      },
+      "reauth": {
+        "title": "Re-authenticate with Prusa Connect",
+        "description": "Open the login link, sign in, then paste the redirect URL (or code) below.\n\n[Log in to Prusa Connect]({authorize_url})",
+        "data": {
+          "auth_code": "Pasted redirect URL or authorization code"
         }
       }
     }

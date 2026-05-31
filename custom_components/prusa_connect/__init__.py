@@ -66,7 +66,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     frontend_dir = pathlib.Path(__file__).parent / "frontend"
 
     try:
-        hass.http.async_register_static_paths(
+        await hass.http.async_register_static_paths(
             [StaticPathConfig(URL_BASE, str(frontend_dir), False)]
         )
     except Exception:
