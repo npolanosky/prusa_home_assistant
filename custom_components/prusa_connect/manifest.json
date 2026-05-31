@@ -8,5 +8,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/npolanosky/prusa_home_assistant/issues",
   "requirements": [],
-  "version": "2.7.1"
+  "version": "2.7.2"
 }
