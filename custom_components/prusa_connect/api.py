@@ -269,6 +269,32 @@ class PrusaConnectClient:
         except json.JSONDecodeError as err:
             raise PrusaConnectError(f"Invalid JSON from {path}: {err}") from err
 
+    async def get_image(self, url: str, *, _retried: bool = False) -> bytes | None:
+        """Fetch raw image bytes (e.g. the job preview) with Bearer auth.
+
+        ``url`` may be absolute (job_info.preview_url) or a /app/... relative path.
+        """
+        if not self._access_token:
+            return None
+        full = url if url.startswith("http") else f"{PRUSA_CONNECT_CLOUD_API}{url}"
+        headers = {"Authorization": f"Bearer {self._access_token}"}
+        try:
+            async with self._session.get(
+                full, headers=headers, timeout=aiohttp.ClientTimeout(total=20)
+            ) as resp:
+                if resp.status in (401, 403) and not _retried:
+                    ok, _ = await self.async_refresh_token()
+                    if ok:
+                        return await self.get_image(url, _retried=True)
+                    return None
+                if resp.status == 200:
+                    return await resp.read()
+                _LOGGER.debug("Prusa Connect preview %s -> HTTP %s", full, resp.status)
+                return None
+        except aiohttp.ClientError as err:
+            _LOGGER.debug("Prusa Connect preview fetch failed: %s", err)
+            return None
+
     async def validate(self) -> tuple[bool, str]:
         """Validate the current token by listing printers."""
         try:
